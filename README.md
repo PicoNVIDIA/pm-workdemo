@@ -1,6 +1,8 @@
 # nemoclaw-demos
 
-A repository of notebooks with examples you can take after a successful [hello-world setup of NemoClaw](https://github.com/NVIDIA/NemoClaw).
+A repository of guides with examples you can take after a successful [hello-world setup of NemoClaw](https://github.com/NVIDIA/NemoClaw).
+
+- **blender-openclaw-guide.md**: example of using OpenClaw to enable natural language interactions with the Blender 3D design software
 
 Also keep in mind the official examples: 
 

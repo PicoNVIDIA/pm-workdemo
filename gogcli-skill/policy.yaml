@@ -20,10 +20,10 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: PUT, path: "/**" }
-          - allow: { method: PATCH, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
+          # - allow: { method: POST, path: "/**" }
+          # - allow: { method: PUT, path: "/**" }
+          # - allow: { method: PATCH, path: "/**" }
+          # - allow: { method: DELETE, path: "/**" }
     binaries:
       - { path: /sandbox/.config/gogcli/gog-bin }
 
@@ -37,10 +37,10 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: PUT, path: "/**" }
-          - allow: { method: PATCH, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
+          # - allow: { method: POST, path: "/**" }
+          # - allow: { method: PUT, path: "/**" }
+          # - allow: { method: PATCH, path: "/**" }
+          # - allow: { method: DELETE, path: "/**" }
     binaries:
       - { path: /sandbox/.config/gogcli/gog-bin }
 
@@ -54,10 +54,10 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: PUT, path: "/**" }
-          - allow: { method: PATCH, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
+          # - allow: { method: POST, path: "/**" }
+          # - allow: { method: PUT, path: "/**" }
+          # - allow: { method: PATCH, path: "/**" }
+          # - allow: { method: DELETE, path: "/**" }
       # Drive file upload uses a separate upload endpoint
       - host: www.googleapis.com
         port: 443
@@ -65,8 +65,8 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/upload/**" }
-          - allow: { method: POST, path: "/upload/**" }
-          - allow: { method: PUT, path: "/upload/**" }
+          # - allow: { method: GET, path: "/upload/**" }
+          # - allow: { method: POST, path: "/upload/**" }
+          # - allow: { method: PUT, path: "/upload/**" }
     binaries:
       - { path: /sandbox/.config/gogcli/gog-bin }

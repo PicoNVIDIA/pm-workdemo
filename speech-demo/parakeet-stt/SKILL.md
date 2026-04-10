@@ -1,88 +1,59 @@
 ---
 name: parakeet-stt
 description: >-
-  Local speech-to-text with NVIDIA Parakeet TDT 0.6B v3 (ONNX on CPU).
-  30x faster than Whisper, 25 languages, auto-detection, OpenAI-compatible API.
+  Speech-to-text transcription using NVIDIA Parakeet. The service is already
+  running on the host — do NOT install or start it. Use curl to call the API.
   Use when transcribing audio files, converting speech to text, or processing
-  voice recordings locally without cloud APIs.
-homepage: https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai
-metadata: {"clawdbot":{"emoji":"🦜","env":["PARAKEET_URL"]}}
+  voice recordings.
 ---
 
-# Parakeet TDT (Speech-to-Text)
+# Parakeet STT (Speech-to-Text)
 
-Local transcription using NVIDIA Parakeet TDT 0.6B v3 with ONNX Runtime.
-Runs on CPU — no GPU required. ~30x faster than realtime.
+Transcribe audio files using the Parakeet STT service. The service is **already running on the host** — do NOT try to install, clone, or start it yourself.
 
-## Installation
+## How to Transcribe
 
-```bash
-# Clone the repo
-git clone https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai.git
-cd parakeet-tdt-0.6b-v3-fastapi-openai
+Use `curl` to send audio files to the Parakeet API. Replace `PARAKEET_URL` below with the actual service URL (e.g. `http://172.31.35.26:5092`) before uploading this file to the sandbox.
 
-# Run with Docker (recommended)
-docker compose up -d parakeet-cpu
+**IMPORTANT:** Do NOT try to install Parakeet, clone repos, run Docker, or start uvicorn. The service is already running externally. Just use curl.
 
-# Or run directly with Python
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 5000
-```
-
-Default port is `5000`. Set `PARAKEET_URL` to override (e.g., `http://localhost:5092`).
-
-## API Endpoint
-
-OpenAI-compatible API at `$PARAKEET_URL` (default: `http://localhost:5000`).
-
-## Quick Start
+### Transcribe to plain text
 
 ```bash
-# Transcribe audio file (plain text)
-curl -X POST $PARAKEET_URL/v1/audio/transcriptions \
-  -F "file=@/path/to/audio.mp3" \
+curl -s -X POST PARAKEET_URL/v1/audio/transcriptions \
+  -F "file=@/path/to/audio.wav" \
   -F "response_format=text"
-
-# Get timestamps and segments
-curl -X POST $PARAKEET_URL/v1/audio/transcriptions \
-  -F "file=@/path/to/audio.mp3" \
-  -F "response_format=verbose_json"
-
-# Generate subtitles (SRT)
-curl -X POST $PARAKEET_URL/v1/audio/transcriptions \
-  -F "file=@/path/to/audio.mp3" \
-  -F "response_format=srt"
 ```
 
-## Python / OpenAI SDK
+### Transcribe with timestamps (JSON)
 
-```python
-import os
-from openai import OpenAI
+```bash
+curl -s -X POST PARAKEET_URL/v1/audio/transcriptions \
+  -F "file=@/path/to/audio.wav" \
+  -F "response_format=verbose_json"
+```
 
-client = OpenAI(
-    base_url=os.getenv("PARAKEET_URL", "http://localhost:5000") + "/v1",
-    api_key="not-needed"
-)
+### Generate subtitles (SRT)
 
-with open("audio.mp3", "rb") as f:
-    transcript = client.audio.transcriptions.create(
-        model="parakeet-tdt-0.6b-v3",
-        file=f,
-        response_format="text"
-    )
-print(transcript)
+```bash
+curl -s -X POST PARAKEET_URL/v1/audio/transcriptions \
+  -F "file=@/path/to/audio.wav" \
+  -F "response_format=srt"
 ```
 
 ## Response Formats
 
 | Format | Output |
 |--------|--------|
-| `text` | Plain text |
+| `text` | Plain text transcription |
 | `json` | `{"text": "..."}` |
 | `verbose_json` | Segments with timestamps and words |
 | `srt` | SRT subtitles |
 | `vtt` | WebVTT subtitles |
+
+## Supported Audio Formats
+
+WAV, MP3, OGG, FLAC, M4A, WEBM
 
 ## Supported Languages (25)
 
@@ -93,29 +64,9 @@ Estonian, Slovenian
 
 Language is auto-detected — no configuration needed.
 
-## Web Interface
+## Notes
 
-Open `$PARAKEET_URL` in a browser for drag-and-drop transcription UI.
-
-## Docker Management
-
-```bash
-# Check status
-docker ps --filter "name=parakeet"
-
-# View logs
-docker logs -f <container-name>
-
-# Restart
-docker compose restart
-
-# Stop
-docker compose down
-```
-
-## Why Parakeet over Whisper?
-
-- **Speed**: ~30x faster than realtime on CPU
-- **Accuracy**: Comparable to Whisper large-v3
-- **Privacy**: Runs 100% locally, no cloud calls
-- **Compatibility**: Drop-in replacement for OpenAI's transcription API
+- Audio files must be in the workspace at `/sandbox/.openclaw-data/workspace/`
+- The service runs on the host, not inside the sandbox
+- No API key is needed
+- If `PARAKEET_URL` is not set, check with the user for the service URL

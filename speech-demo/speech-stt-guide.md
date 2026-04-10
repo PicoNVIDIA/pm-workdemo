@@ -175,47 +175,28 @@ You should see the `parakeet_stt` policy block with your host IP.
 
 The skill file teaches the OpenClaw agent how to use the Parakeet API for transcription. Upload the skill into the sandbox:
 
+The SKILL.md contains a `PARAKEET_URL` placeholder that must be replaced with the actual service URL before uploading. This tells the agent exactly where to send requests — without it, the agent may try to install Parakeet inside the sandbox.
+
 ``` bash
 # Create the skill directory
 docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent \
   -- mkdir -p /sandbox/.openclaw/skills/parakeet-stt
 
-# Upload the SKILL.md
-cat speech-demo/parakeet-stt/SKILL.md | docker exec -i $DOCKER_CTR \
+# Replace the placeholder with the actual URL and upload
+sed "s|PARAKEET_URL|http://$HOST_IP:5092|g" speech-demo/parakeet-stt/SKILL.md | \
+  docker exec -i $DOCKER_CTR \
   kubectl exec -i -n openshell $SANDBOX -c agent \
   -- sh -c 'cat > /sandbox/.openclaw/skills/parakeet-stt/SKILL.md'
 ```
 
-You should see no output (silent write).
-
-Set the `PARAKEET_URL` environment variable so the skill knows where to reach the service. Write it into the sandbox:
+Verify the skill was uploaded with the correct URL:
 
 ``` bash
 docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent \
-  -- bash -c "echo 'export PARAKEET_URL=http://$HOST_IP:5092' >> /sandbox/.bashrc"
+  -- grep "5092" /sandbox/.openclaw/skills/parakeet-stt/SKILL.md
 ```
 
-Restart the gateway to pick up the new skill:
-
-``` bash
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent \
-  -- bash -c 'openclaw gateway stop; sleep 3; PATH="/sandbox/bin:$PATH" nohup openclaw gateway run --bind loopback --port 18789 > /tmp/gateway.log 2>&1 &'
-```
-
-Wait a few seconds and verify:
-
-``` bash
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent \
-  -- openclaw skills check 2>/dev/null
-```
-
-You should see `parakeet-stt` listed as an available skill.
-
-> **Note:** If `openclaw skills check` is not available on your version, verify the skill file exists:
-> ``` bash
-> docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent \
->   -- ls -la /sandbox/.openclaw/skills/parakeet-stt/SKILL.md
-> ```
+You should see curl commands with `http://<your-host-ip>:5092` (not the placeholder).
 
 ## Part 7: Test It
 
@@ -314,7 +295,9 @@ Other prompts to try:
 |-------|-----|
 | `Connection refused` from sandbox to Parakeet | Check network policy has the correct `HOST_IP` and port 5092. Redo Part 5. |
 | `l7_decision=deny` in OpenShell logs | The sandbox policy isn't allowing traffic. Verify the `parakeet_stt` block in the policy. |
-| Agent doesn't know about parakeet-stt | Verify SKILL.md was uploaded to `/sandbox/.openclaw/skills/parakeet-stt/` and the gateway was restarted. |
+| Agent doesn't know about parakeet-stt | Verify SKILL.md was uploaded to `/sandbox/.openclaw/skills/parakeet-stt/`. |
+| Agent tries to install Parakeet inside sandbox | The SKILL.md still has the `PARAKEET_URL` placeholder instead of the actual URL. Re-run the `sed` command in Part 6 to replace it with `http://<HOST_IP>:5092`. The agent reads the skill and sees installation instructions — it needs to see the hardcoded URL with "do NOT install" instead. |
+| Agent hangs for 10+ minutes | Same as above — the agent is trying to clone repos, install packages, and run uvicorn inside the sandbox. Fix the SKILL.md and clear sessions: `docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX -c agent -- rm -rf /sandbox/.openclaw-data/agents/main/sessions/*` |
 | Parakeet service not running | Check `docker ps --filter "name=parakeet"`. Restart with `docker compose up -d parakeet-cpu`. |
 | Empty transcription | The audio file may be silence, corrupted, or in an unsupported format. Try a different file. |
 | `PARAKEET_URL` not set | Verify the env var is set inside the sandbox: `echo $PARAKEET_URL` |

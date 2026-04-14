@@ -111,12 +111,22 @@ The server listens at `http://0.0.0.0:9003/mcp` by default. Override with enviro
 
 | Variable | Default | Description |
 |---|---|---|
-| `NVIDIA_API_KEY` | *(required)* | NVIDIA API key for the LLM dispatcher |
+| `NVIDIA_API_KEY` | *(required)* | NVIDIA API key — needed **on the host** because the MCP server itself calls `ChatNVIDIA` to interpret free-text queries via the `pst_agent` dispatcher tool. The sandbox never touches this key. |
 | `MCP_EXTRACT_PST_HOST` | `0.0.0.0` | Bind host |
 | `MCP_EXTRACT_PST_PORT` | `9003` | Bind port |
 | `MCP_EXTRACT_PST_PATH` | `/mcp` | URL path |
 | `MCP_EXTRACT_PST_LOG_LEVEL` | `debug` | Log verbosity |
 | `ASPOSE_EMAIL_LICENSE_PATH` | *(optional)* | Path to Aspose `.lic` file |
+
+Set `NVIDIA_API_KEY` before starting the server — either export it in your shell or create a `.env` file in the `outlook-pst-demo/` directory:
+
+```bash
+# Option A — shell export (current session only)
+export NVIDIA_API_KEY="nvapi-..."
+
+# Option B — .env file (loaded automatically by the server via python-dotenv)
+echo 'NVIDIA_API_KEY="nvapi-..."' > outlook-pst-demo/.env
+```
 
 ---
 

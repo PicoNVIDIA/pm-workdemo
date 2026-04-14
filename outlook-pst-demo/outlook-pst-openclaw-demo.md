@@ -168,7 +168,7 @@ openshell sandbox upload <sandbox_name> \
 The skill's client script (`scripts/pst_client.py`) requires `fastmcp` to connect to the MCP server. Install it inside the sandbox:
 
 ```bash
-openshell sandbox connect <sandbox_name>
+nemoclaw my-assistant connect
 # Inside the sandbox:
 pip install fastmcp
 ```

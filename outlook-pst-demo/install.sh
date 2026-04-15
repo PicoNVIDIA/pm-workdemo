@@ -291,7 +291,7 @@ echo ""
 # ── Step 7: Apply sandbox network policy ────────────────────────
 info "Applying sandbox network policy..."
 openshell policy set "$SANDBOX_NAME" \
-  --policy "$SCRIPT_DIR/sandbox_policy.yaml" \
+  --policy "$SCRIPT_DIR/policy/sandbox_policy.yaml" \
   --wait
 ok "Policy applied"
 echo ""

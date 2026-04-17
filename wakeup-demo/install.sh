@@ -4,7 +4,7 @@ set -euo pipefail
 # ── NemoClaw Wakeup Installer ───────────────────────────────────
 # Sets up a host-side cron job that periodically wakes the OpenClaw
 # agent inside an OpenShell sandbox via SSH. The agent reads its
-# instructions from /sandbox/.openclaw/workspace/WAKEUP.md.
+# instructions from /sandbox/.openclaw-data/workspace/WAKEUP.md.
 #
 # Trigger path: host cron → SSH → openclaw agent → reads WAKEUP.md
 # SSH is used instead of `openshell sandbox exec` because exec is
@@ -14,8 +14,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.nemoclaw/wakeup"
 SANDBOXES_JSON="$HOME/.nemoclaw/sandboxes.json"
-WAKEUP_MD_PATH="/sandbox/.openclaw/workspace/WAKEUP.md"
-SKILL_DEST="/sandbox/.openclaw/skills/nemoclaw-wakeup/SKILL.md"
+WAKEUP_MD_PATH="/sandbox/.openclaw-data/workspace/WAKEUP.md"
+SKILL_DEST="/sandbox/.openclaw-data/skills/nemoclaw-wakeup/SKILL.md"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -321,7 +321,7 @@ fi
 SESSION_ID="wakeup-$(date +%s)-$$"
 
 # ── Agent message ────────────────────────────────────────────────
-AGENT_MSG="NemoClaw Wakeup triggered. You MUST read the file /sandbox/.openclaw/workspace/WAKEUP.md right now and follow ONLY the instructions in that file. Do not use any cached or remembered instructions from previous sessions. Read the file fresh. Do not send messages to Telegram, Discord, or Slack unless WAKEUP.md explicitly tells you to."
+AGENT_MSG="NemoClaw Wakeup triggered. You MUST read the file /sandbox/.openclaw-data/workspace/WAKEUP.md right now and follow ONLY the instructions in that file. Do not use any cached or remembered instructions from previous sessions. Read the file fresh. Do not send messages to Telegram, Discord, or Slack unless WAKEUP.md explicitly tells you to."
 
 echo "$(date +%Y-%m-%dT%H:%M:%S) START session=$SESSION_ID sandbox=$WAKEUP_SANDBOX" >> "$LOG"
 
@@ -392,11 +392,11 @@ echo "  The agent reads WAKEUP.md in the sandbox for its instructions."
 echo "  To change what the agent does:"
 echo ""
 echo "    Via TUI or Telegram:"
-echo "      \"Update my /sandbox/.openclaw/workspace/WAKEUP.md to also check my calendar\""
+echo "      \"Update my /sandbox/.openclaw-data/workspace/WAKEUP.md to also check my calendar\""
 echo ""
 echo "    Via SSH:"
 echo "      openshell sandbox connect $SANDBOX_NAME"
-echo "      nano /sandbox/.openclaw/workspace/WAKEUP.md"
+echo "      nano /sandbox/.openclaw-data/workspace/WAKEUP.md"
 echo ""
 echo "  Commands:"
 echo "    Test now:         $INSTALL_DIR/wakeup.sh"

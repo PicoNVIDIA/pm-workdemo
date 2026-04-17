@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-wakeup
-description: "Host-side scheduled wakeup trigger for NemoClaw. Use when: user asks about wakeup, heartbeat, scheduled tasks, cron, timer, interval, periodic checks, how often agent runs, changing the schedule, what happens on wakeup, or editing WAKEUP.md. This skill explains that the wakeup schedule is controlled by a host-side cron job outside the sandbox and cannot be modified from inside. The agent reads /sandbox/.openclaw/workspace/WAKEUP.md for its task instructions on each pulse."
+description: "Host-side scheduled wakeup trigger for NemoClaw. Use when: user asks about wakeup, heartbeat, scheduled tasks, cron, timer, interval, periodic checks, how often agent runs, changing the schedule, what happens on wakeup, or editing WAKEUP.md. This skill explains that the wakeup schedule is controlled by a host-side cron job outside the sandbox and cannot be modified from inside. The agent reads /sandbox/.openclaw-data/workspace/WAKEUP.md for its task instructions on each pulse."
 ---
 
 # NemoClaw Wakeup
@@ -21,7 +21,7 @@ message. You must now read your task file and follow the instructions inside it.
 
 ## Your task file
 
-**Path:** `/sandbox/.openclaw/workspace/WAKEUP.md`
+**Path:** `/sandbox/.openclaw-data/workspace/WAKEUP.md`
 
 Read this file **right now** and follow every instruction in it. Do NOT rely on
 memory from previous sessions. The file may have been edited since the last time
@@ -29,8 +29,8 @@ you ran.
 
 ## What you CAN do
 
-- Read `/sandbox/.openclaw/workspace/WAKEUP.md` to get your current instructions
-- Edit `/sandbox/.openclaw/workspace/WAKEUP.md` when a user asks you to change
+- Read `/sandbox/.openclaw-data/workspace/WAKEUP.md` to get your current instructions
+- Edit `/sandbox/.openclaw-data/workspace/WAKEUP.md` when a user asks you to change
   your wakeup tasks (e.g., "add checking my calendar to your wakeup tasks")
 - Use any installed skills (gog, planet, brave, etc.) as directed by WAKEUP.md
 - Report results in the current session
@@ -75,5 +75,5 @@ with the current setting and direct them to the host:
 ## When a user asks to change wakeup tasks
 
 If a user asks you to change **what** you do when you wake up, edit the
-`/sandbox/.openclaw/workspace/WAKEUP.md` file with their requested changes.
+`/sandbox/.openclaw-data/workspace/WAKEUP.md` file with their requested changes.
 Confirm the changes were saved. The next wakeup pulse will use the updated file.

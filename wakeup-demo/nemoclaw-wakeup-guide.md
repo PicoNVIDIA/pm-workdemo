@@ -33,7 +33,7 @@ The installer will:
 ```
 +--- Host (cron) ----------------+     +--- Sandbox (OpenShell) ----------------------+
 |                                 |     |                                               |
-|  every N minutes:               |     |  /sandbox/.openclaw/workspace/WAKEUP.md       |
+|  every N minutes:               |     |  /sandbox/.openclaw-data/workspace/WAKEUP.md       |
 |    SSH into sandbox (~400ms) ---|---->|    "Check my email and summarize..."          |
 |    fire: openclaw agent         |     |                                               |
 |    unique session ID            |     |  Agent reads file fresh, follows instructions  |
@@ -84,10 +84,10 @@ The install script handles deploying `WAKEUP.md` automatically. If you prefer to
 ```bash
 # SSH into sandbox
 openshell sandbox connect <sandbox-name>
-nano /sandbox/.openclaw/workspace/WAKEUP.md
+nano /sandbox/.openclaw-data/workspace/WAKEUP.md
 
 # Or upload from host
-openshell sandbox upload <sandbox-name> ~/my-wakeup.md /sandbox/.openclaw/workspace/WAKEUP.md
+openshell sandbox upload <sandbox-name> ~/my-wakeup.md /sandbox/.openclaw-data/workspace/WAKEUP.md
 ```
 
 ---
@@ -130,9 +130,9 @@ The timer is controlled by the host cron job, not by the agent. The agent knows 
 └── wakeup.log      # Output log (auto-rotated at 1000 lines)
 
 Inside the sandbox:
-/sandbox/.openclaw/workspace/
+/sandbox/.openclaw-data/workspace/
 └── WAKEUP.md                          # Agent reads this for instructions
-/sandbox/.openclaw/skills/nemoclaw-wakeup/
+/sandbox/.openclaw-data/skills/nemoclaw-wakeup/
 └── SKILL.md                           # Agent skill (knows it can't modify timer)
 ```
 

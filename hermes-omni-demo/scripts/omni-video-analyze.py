@@ -265,7 +265,7 @@ def analyze_single(video_path: str, prompt: str = None):
             "content or purpose of the video."
         )
 
-    print("\nSending to Nemotron Omni 30B...")
+    print("\nSending to Nemotron 3 Nano Omni...")
     result = call_omni(video_path, prompt, max_tokens=4096)
 
     if result["reasoning"]:
@@ -390,7 +390,7 @@ def transcript_single(video_path: str):
         "- Output ONLY valid JSON, nothing else"
     )
 
-    print("Sending to Nemotron Omni 30B for transcription...")
+    print("Sending to Nemotron 3 Nano Omni for transcription...")
     result = call_omni(video_path, transcript_prompt, max_tokens=8192)
     captions = _parse_transcript_json(result["content"])
 
@@ -436,7 +436,7 @@ def _parse_transcript_json(text: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Analyze video with Nemotron Omni 30B (single video, image, audio, "
+        description="Analyze video with Nemotron 3 Nano Omni (single video, image, audio, "
                     "PDF-pages dir, or chunked-video dir)",
     )
     parser.add_argument("video", help="Path to video / image / audio / pages dir / chunks dir")

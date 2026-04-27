@@ -82,7 +82,7 @@ nemoclaw my-hermes status
 
 You should see `Phase: Ready` and the Hermes gateway listening on port 8642.
 
-### Switch the gateway to Nemotron Omni
+### Switch the gateway to Nemotron 3 Nano Omni
 
 You picked Super 120B during onboarding because that's what the menu offers, but this cookbook needs **Omni** as the primary model so Hermes can handle video, audio, images, and PDFs. Swap the gateway's inference route now:
 
@@ -195,7 +195,7 @@ openshell policy get $SANDBOX --full | grep -E "wikipedia|dictionary"
 
 Hermes uses "skills" — self-contained `SKILL.md` manifests — to decide which tool to run for a given user request. We ship two:
 
-- **video-analyze** — wraps `omni-video-analyze.py`. Handles **video, audio, image, PDF-pages, and chunk directories** (single skill, multiple input shapes — see [Part 11 / 12 / 10](#part-10-long-videos--chunk-and-synthesize)).
+- **video-analyze** — wraps `omni-video-analyze.py`. Handles **video, audio, image, PDF-pages, and chunk directories** (one skill, multiple input shapes — see [Part 10 (long videos)](#part-10-long-videos--chunk-and-synthesize), [Part 11 (PDFs)](#part-11-pdf-documents), [Part 12 (audio)](#part-12-audio)).
 - **jargon-lookup** — wraps `lookup-jargon.py`. Wikipedia + Free Dictionary fallback.
 
 Install both:

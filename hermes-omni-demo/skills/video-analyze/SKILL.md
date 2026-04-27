@@ -1,15 +1,15 @@
 ---
 name: video-analyze
-description: Analyze video files using Nemotron Omni 30B multimodal model. Handles a single video, image, audio file, a directory of PDF-rendered pages, OR a directory of pre-chunked video segments for long videos. Use whenever the user provides a video path and wants it analyzed, described, summarized, or transcribed.
+description: Analyze video files using Nemotron 3 Nano Omni multimodal model. Handles a single video, image, audio file, a directory of PDF-rendered pages, OR a directory of pre-chunked video segments for long videos. Use whenever the user provides a video path and wants it analyzed, described, summarized, or transcribed.
 version: 3.0.0
 metadata:
   hermes:
     tags: [video, omni, multimodal, transcript, analysis, nemotron, long-video, chunked]
 ---
 
-# Video Analysis with Nemotron Omni
+# Video Analysis with Nemotron 3 Nano Omni
 
-Analyze videos, audio, images, and documents using NVIDIA's Nemotron Omni 30B multimodal model.
+Analyze videos, audio, images, and documents using NVIDIA's Nemotron 3 Nano Omni multimodal model.
 
 ## Inputs the skill accepts
 

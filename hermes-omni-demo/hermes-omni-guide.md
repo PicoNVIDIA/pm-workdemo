@@ -100,15 +100,35 @@ openshell inference get
 
 You should see `Model: private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`.
 
-### Update the Hermes display label too
+### Update the Hermes display labels too
 
-The OpenShell gateway routes every call to whatever you just set, but Hermes's *own* config still says it's calling Super 120B and will print that label in its TUI banner. Fix it so the display matches reality:
+The OpenShell gateway routes every call to whatever you just set, but **two other places** still cache the model name from onboarding (Super 120B) and will display it even though the actual inference is going to Omni. Fix both so the display matches reality:
 
 ```bash
-openshell sandbox exec -n my-hermes -- bash -c "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-reasoning-30b-a3b|' /sandbox/.hermes-data/config.yaml"
+# 1. Hermes's in-sandbox config (controls the TUI banner)
+openshell sandbox exec -n my-hermes -- bash -c \
+  "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-reasoning-30b-a3b|' \
+   /sandbox/.hermes-data/config.yaml"
+
+# 2. Host-side sandbox metadata (controls `nemoclaw list` output)
+python3 -c "
+import json, pathlib
+p = pathlib.Path.home() / '.nemoclaw' / 'sandboxes.json'
+d = json.load(open(p))
+d['sandboxes']['my-hermes']['model'] = 'nvidia/nemotron-3-nano-omni-reasoning-30b-a3b'
+json.dump(d, open(p, 'w'), indent=4)
+print('updated', p)
+"
 ```
 
-If you skip this, the model name shown in the Hermes prompt header will be wrong even though the actual inference is hitting Omni — confusing during a demo.
+Verify both:
+
+```bash
+nemoclaw list                                                   # should show Omni
+openshell sandbox exec -n my-hermes -- grep -A1 '^model:' /sandbox/.hermes-data/config.yaml
+```
+
+If you skip this, `nemoclaw list` and the Hermes TUI banner will show Super 120B even though every actual inference call goes to Omni — confusing during a demo.
 
 ## Part 3: Set Variables
 
@@ -133,10 +153,10 @@ The baseline Hermes policy already allows the NVIDIA Omni API, PyPI, and a few N
 
 ```bash
 openshell policy get $SANDBOX --full > /tmp/raw-policy.txt
-sed -n '8,$p' /tmp/raw-policy.txt > /tmp/current-policy.yaml
+awk '/^---$/{seen=1; next} seen' /tmp/raw-policy.txt > /tmp/current-policy.yaml
 ```
 
-The first few lines of `raw-policy.txt` are a status header; line 8 onward is the YAML.
+The output of `policy get --full` is a small status header, a `---` separator, and then the YAML. The `awk` line strips everything before the separator so future openshell versions can extend the header without breaking this step.
 
 ### 4b. Append the two new blocks
 
@@ -157,8 +177,10 @@ You should see `✓ Policy version N submitted (hash: ...)`.
 Verify the additions made it in:
 
 ```bash
-openshell policy get $SANDBOX -v | grep -E "wikipedia|dictionary"
+openshell policy get $SANDBOX --full | grep -E "wikipedia|dictionary"
 ```
+
+(Use `--full` — the bare `-v` flag only shows the policy version header, not the YAML body.)
 
 ### What this policy enforces
 
@@ -462,19 +484,18 @@ The UI does **not** add capability — it talks to the same sandbox, the same He
 ### Run it
 
 ```bash
-# 1. install server deps
+# 1. install server deps (uses the SANDBOX env var you exported in Part 3)
 cd server
 pip install -r requirements.txt
-export OMNI_SANDBOX=$SANDBOX
-uvicorn server:app --host 0.0.0.0 --port 8088
+uvicorn server:app --host 0.0.0.0 --port 8765
 
 # 2. in a second terminal, install + run the UI
 cd ../ui
-pnpm install      # or: npm install
-pnpm dev          # → http://localhost:5173
+npm install
+npm run dev       # → http://localhost:5173
 ```
 
-The UI proxies `/api/*` to the FastAPI server on port 8088 (configured in `vite.config.ts`).
+The UI proxies `/api/*` to the FastAPI server on port `8765` (configured in `ui/vite.config.ts`). If you change the server port, update the proxy target there too.
 
 ### What's in `ui/src/components/`
 

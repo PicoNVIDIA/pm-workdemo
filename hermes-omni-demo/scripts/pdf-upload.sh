@@ -10,11 +10,11 @@
 #   What's the main argument in the document at <printed-sandbox-path>?
 #
 # Defaults:
-#   sandbox : my-hermes   (override with OMNI_SANDBOX env var)
+#   sandbox : my-hermes   (override with SANDBOX env var)
 set -euo pipefail
 
 PDF="${1:-}"
-SANDBOX="${OMNI_SANDBOX:-my-hermes}"
+SANDBOX="${SANDBOX:-my-hermes}"
 
 if [[ -z "$PDF" || ! -f "$PDF" ]]; then
     echo "usage: $0 <pdf-file>" >&2

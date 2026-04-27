@@ -10,12 +10,12 @@
 #
 # Defaults:
 #   chunk seconds : 120
-#   sandbox       : my-assistant   (override with OMNI_SANDBOX env var)
+#   sandbox       : my-hermes   (override with SANDBOX env var)
 set -euo pipefail
 
 VIDEO="${1:-}"
 CHUNK_SEC="${2:-120}"
-SANDBOX="${OMNI_SANDBOX:-my-assistant}"
+SANDBOX="${SANDBOX:-my-hermes}"
 
 if [[ -z "$VIDEO" || ! -f "$VIDEO" ]]; then
     echo "usage: $0 <video> [chunk-seconds]" >&2

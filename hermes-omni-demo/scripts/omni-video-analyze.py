@@ -2,40 +2,53 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Nemotron Omni video analysis — sends the full video to Omni in one API call.
-
-This script is designed to run INSIDE a NemoClaw sandbox. It calls the openshell
-gateway's inference route at https://inference.local/v1 instead of hitting
-integrate.api.nvidia.com directly. The gateway injects the NVIDIA API key and
-proxies the request out, so no key ever needs to exist inside the sandbox.
-
-The `model` field is ignored by the gateway — it rewrites all requests to
-whatever `openshell inference set` was pointed at (set Omni for this cookbook).
-
-Practical payload ceiling: ~9 MB of base64-encoded video per call (gateway body
-cap). That's roughly 2 minutes of 480p or 1 minute of 720p. Longer videos need
-to be trimmed client-side.
+Nemotron Omni video analysis — single video, single image, audio, PDF-pages, OR
+a directory of pre-chunked MP4 segments for long videos.
 
 Modes:
-    analyze     Describe what's happening in the video (default)
-    transcript  Extract audio captions as JSON with timestamps
+    analyze     Describe what's happening (default)
+    transcript  Extract audio captions as JSON
+
+Backwards-compatible inputs:
+    .mp4 / .mov / .webm     → one video_url call (current behavior)
+    .mp3 / .wav / .m4a      → one input_audio call
+    .png / .jpg / .webp     → one image_url call
+    directory of PNGs       → multi-image_url call (PDF pages)
+    directory of MP4s       → NEW: per-chunk video_url calls + synthesis
+
+Chunk directories are produced by the host-side chunk-upload.sh helper. Each
+directory should contain chunk_001.mp4, chunk_002.mp4, ... and a chunks.json
+manifest with start/end times for each segment. If chunks.json is missing the
+script falls back to assuming sequential chunks with no time metadata.
 
 Usage:
     python3 omni-video-analyze.py /path/to/video.mp4
-    python3 omni-video-analyze.py /path/to/video.mp4 "What topics are covered?"
+    python3 omni-video-analyze.py /path/to/video.mp4 "Custom question"
     python3 omni-video-analyze.py /path/to/video.mp4 --mode transcript
+    python3 omni-video-analyze.py /tmp/long-video-chunks    # NEW chunked path
+    python3 omni-video-analyze.py /tmp/long-video-chunks "What's the speaker's main argument?"
 """
 import sys, json, base64, urllib.request, os, subprocess, re, argparse, struct
 
 API_URL = "https://inference.local/v1/chat/completions"
-# Model field is rewritten by the openshell gateway based on its configured
-# inference route. Kept here only as a documentation hint.
 MODEL = "private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+
+AUDIO_EXTS = {"mp3", "wav", "m4a", "aac", "ogg", "flac"}
+IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXTS = {"mp4", "mov", "webm", "mkv", "avi"}
+
+# Per-chunk Omni call should leave room for the synthesis call. Cap each
+# chunk's analysis budget so total tokens stay reasonable on a 30-min video.
+CHUNK_MAX_TOKENS = 3072
+SYNTHESIS_MAX_TOKENS = 4096
+
+# Omni's chat-completions endpoint accepts at most this many image_url
+# blocks per request. PDFs / image dirs over this length are split into
+# batches, then synthesized.
+MAX_IMAGES_PER_CALL = 8
 
 
 def get_duration(video_path: str):
-    """Get video duration in seconds. Uses ffprobe if present, else parses MP4 mvhd atom.
-    Returns None if duration can't be determined (analysis still proceeds)."""
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
@@ -52,7 +65,6 @@ def get_duration(video_path: str):
 
 
 def _mp4_duration_pure_python(path: str) -> float:
-    """Parse MP4/MOV duration from the mvhd atom without ffprobe."""
     with open(path, "rb") as f:
         data = f.read()
 
@@ -97,67 +109,184 @@ def fmt_time(seconds: float) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def call_omni(video_path: str, prompt: str, max_tokens: int = 2048) -> dict:
-    """Send the whole video to Omni via the openshell gateway."""
-    with open(video_path, "rb") as f:
-        video_b64 = base64.b64encode(f.read()).decode()
-
-    ext = os.path.splitext(video_path)[1].lstrip(".") or "mp4"
-    mime = f"video/{ext}"
-
-    payload = json.dumps({
-        "model": MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "video_url", "video_url": {"url": f"data:{mime};base64,{video_b64}"}},
-            ],
-        }],
-        "max_tokens": max_tokens,
-    }).encode()
-
-    size_mb = len(payload) / 1e6
-    if size_mb > 9:
-        print(
-            f"Warning: payload is {size_mb:.1f} MB. The openshell gateway caps "
-            "inference bodies around ~9 MB; the call may fail with an SSL EOF. "
-            "Trim the video with ffmpeg if needed.",
-            file=sys.stderr,
-        )
-
-    req = urllib.request.Request(
-        API_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-        },
+def _is_chunk_dir(path: str) -> bool:
+    """A chunk dir is a directory containing one or more .mp4 (or other video) files."""
+    if not os.path.isdir(path):
+        return False
+    return any(
+        os.path.splitext(f)[1].lstrip(".").lower() in VIDEO_EXTS
+        for f in os.listdir(path)
     )
 
-    size_kb = len(video_b64) // 1024
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = json.loads(resp.read())
+
+def _load_chunks_manifest(chunk_dir: str) -> list:
+    """Return a list of {name, path, start, end} for every chunk, in order."""
+    files = sorted(
+        f for f in os.listdir(chunk_dir)
+        if os.path.splitext(f)[1].lstrip(".").lower() in VIDEO_EXTS
+    )
+    manifest_path = os.path.join(chunk_dir, "chunks.json")
+
+    times = {}
+    if os.path.exists(manifest_path):
+        with open(manifest_path) as f:
+            data = json.load(f)
+        for entry in data.get("chunks", []):
+            times[entry["name"]] = (float(entry["start"]), float(entry["end"]))
+
+    chunks = []
+    cursor = 0.0
+    for name in files:
+        path = os.path.join(chunk_dir, name)
+        if name in times:
+            start, end = times[name]
+        else:
+            dur = get_duration(path) or 0.0
+            start, end = cursor, cursor + dur
+        chunks.append({"name": name, "path": path, "start": start, "end": end})
+        cursor = chunks[-1]["end"]
+    return chunks
+
+
+def _build_content_blocks(path: str, prompt: str) -> list:
+    """Build messages[0].content for non-chunked inputs."""
+    blocks = [{"type": "text", "text": prompt}]
+
+    if os.path.isdir(path):
+        # PDF-pages dir (images only)
+        pages = sorted(
+            os.path.join(path, f)
+            for f in os.listdir(path)
+            if os.path.splitext(f)[1].lstrip(".").lower() in IMAGE_EXTS
+        )
+        for p in pages:
+            with open(p, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            ext = os.path.splitext(p)[1].lstrip(".").lower() or "png"
+            blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/{ext};base64,{b64}"},
+            })
+        return blocks
+
+    ext = os.path.splitext(path)[1].lstrip(".").lower() or "mp4"
+    with open(path, "rb") as f:
+        data_b64 = base64.b64encode(f.read()).decode()
+
+    if ext in AUDIO_EXTS:
+        blocks.append({
+            "type": "input_audio",
+            "input_audio": {
+                "data": data_b64,
+                "format": "mp3" if ext == "mp3" else "wav",
+            },
+        })
+    elif ext in IMAGE_EXTS:
+        blocks.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/{ext};base64,{data_b64}"},
+        })
+    else:
+        blocks.append({
+            "type": "video_url",
+            "video_url": {"url": f"data:video/{ext};base64,{data_b64}"},
+        })
+    return blocks
+
+
+def _post(payload: dict) -> dict:
+    raw = json.dumps(payload).encode()
+    size_kb = len(raw) // 1024
+    # Retry on transient 5xx and SSL/connection errors. The NVIDIA-hosted
+    # endpoint occasionally returns 502/503 mid-demo; one-shot retry with a
+    # short backoff hides the blip.
+    last_err = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                API_URL, data=raw, headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code >= 500 and attempt < 2:
+                print(f"  (transient HTTP {e.code} from gateway, retrying in 2s…)", file=sys.stderr)
+                import time as _time; _time.sleep(2)
+                continue
+            raise
+        except urllib.error.URLError as e:
+            last_err = e
+            if attempt < 2:
+                print(f"  (connection error: {e.reason}, retrying in 2s…)", file=sys.stderr)
+                import time as _time; _time.sleep(2)
+                continue
+            raise
 
     msg = data["choices"][0]["message"]
+    content = (msg.get("content") or "").strip()
+    reasoning = (msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
+    if not content and reasoning:
+        # Reasoning model ran out of tokens before producing a final content
+        # block; fall back to whatever it managed to think.
+        content = reasoning
     return {
-        "content": msg["content"].strip(),
-        "reasoning": (msg.get("reasoning_content") or msg.get("reasoning") or "").strip(),
+        "content": content,
+        "reasoning": reasoning,
         "tokens": data["usage"]["total_tokens"],
         "payload_kb": size_kb,
     }
 
 
-def analyze_video(video_path: str, prompt: str = None):
+def call_omni(path: str, prompt: str, max_tokens: int = 2048) -> dict:
+    content = _build_content_blocks(path, prompt)
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": max_tokens,
+    }
+    raw_size_mb = len(json.dumps(payload).encode()) / 1e6
+    if raw_size_mb > 9:
+        # The gateway will silently drop this with an SSL EOF after 30+
+        # seconds. Fail fast with a useful message instead.
+        sys.exit(
+            f"\nERROR: this video is too large to send to Omni in one call.\n"
+            f"Payload would be {raw_size_mb:.1f} MB; the gateway caps requests at ~9 MB.\n"
+            f"Run on the host first to split it into chunks:\n"
+            f"    bash scripts/chunk-upload.sh {path}\n"
+            f"Then re-ask the question against the chunk directory the helper prints."
+        )
+    return _post(payload)
+
+
+def call_omni_text(prompt: str, max_tokens: int = 2048) -> dict:
+    """Text-only Omni call (used by the synthesis pass)."""
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+    }
+    return _post(payload)
+
+
+# ─── single-input path (existing behavior) ────────────────────────────────
+
+
+def analyze_single(video_path: str, prompt: str = None):
     if not os.path.exists(video_path):
         sys.exit(f"File not found: {video_path}")
 
-    duration = get_duration(video_path)
-    size_mb = os.path.getsize(video_path) / 1e6
-    print(f"Video: {video_path}")
-    if duration is not None:
-        print(f"Duration: {fmt_time(duration)} ({duration:.1f}s), {size_mb:.1f}MB")
+    duration = get_duration(video_path) if os.path.isfile(video_path) else None
+    if os.path.isfile(video_path):
+        size_mb = os.path.getsize(video_path) / 1e6
+        print(f"Input: {video_path}")
+        if duration is not None:
+            print(f"Duration: {fmt_time(duration)} ({duration:.1f}s), {size_mb:.1f}MB")
+        else:
+            print(f"Size: {size_mb:.1f}MB")
     else:
-        print(f"Size: {size_mb:.1f}MB")
+        print(f"Input: {video_path} (directory)")
 
     if prompt is None:
         prompt = (
@@ -166,7 +295,7 @@ def analyze_video(video_path: str, prompt: str = None):
             "content or purpose of the video."
         )
 
-    print("\nSending to Nemotron Omni 30B...")
+    print("\nSending to Nemotron 3 Nano Omni...")
     result = call_omni(video_path, prompt, max_tokens=4096)
 
     if result["reasoning"]:
@@ -178,9 +307,205 @@ def analyze_video(video_path: str, prompt: str = None):
     return result
 
 
-def transcript_video(video_path: str):
+# ─── chunked-directory path (new) ──────────────────────────────────────────
+
+
+def analyze_chunked(chunk_dir: str, prompt: str = None):
+    chunks = _load_chunks_manifest(chunk_dir)
+    if not chunks:
+        sys.exit(f"No video chunks found in {chunk_dir}")
+
+    if prompt is None:
+        prompt = (
+            "Watch this video carefully and describe what is happening: "
+            "what you see, what you hear, what actions take place, and the "
+            "overall content or purpose."
+        )
+
+    total_dur = chunks[-1]["end"]
+    print(f"Chunked input: {chunk_dir}")
+    print(f"{len(chunks)} segments, total duration {fmt_time(total_dur)} ({total_dur:.1f}s)")
+    print(f"User prompt: {prompt!r}\n")
+
+    chunk_results = []
+    total_tokens = 0
+    for i, chunk in enumerate(chunks, 1):
+        size_mb = os.path.getsize(chunk["path"]) / 1e6
+        print(
+            f"[{i}/{len(chunks)}] {chunk['name']} "
+            f"({fmt_time(chunk['start'])}-{fmt_time(chunk['end'])}, {size_mb:.1f}MB)..."
+        )
+        chunk_prompt = (
+            f"This is segment {i} of {len(chunks)} from a longer video, covering "
+            f"{fmt_time(chunk['start'])}–{fmt_time(chunk['end'])} of the source. "
+            f"The user's overall question is: {prompt}\n\n"
+            f"Describe what happens in THIS segment. Cite specific moments using "
+            f"timestamps relative to the FULL video (so a moment 30 seconds into "
+            f"this segment becomes {fmt_time(chunk['start'] + 30)}). Stay focused "
+            f"on observable events, dialogue, and visuals — leave conclusions for "
+            f"later synthesis."
+        )
+        try:
+            r = call_omni(chunk["path"], chunk_prompt, max_tokens=CHUNK_MAX_TOKENS)
+        except Exception as e:
+            print(f"    ! chunk {i} failed: {e}", file=sys.stderr)
+            chunk_results.append({
+                **chunk,
+                "analysis": f"[chunk failed: {e}]",
+                "tokens": 0,
+            })
+            continue
+        chunk_results.append({**chunk, "analysis": r["content"], "tokens": r["tokens"]})
+        total_tokens += r["tokens"]
+        print(f"    ok — {r['tokens']} tokens")
+
+    print(f"\nSynthesizing across {len(chunk_results)} segments...")
+
+    chunk_summaries = "\n\n".join(
+        f"=== Segment {i} ({fmt_time(c['start'])}–{fmt_time(c['end'])}) ===\n{c['analysis']}"
+        for i, c in enumerate(chunk_results, 1)
+    )
+    synthesis_prompt = (
+        f"Below are per-segment analyses of a {fmt_time(total_dur)} video, in "
+        f"chronological order. The user asked: {prompt}\n\n"
+        f"Write ONE coherent answer to the user's question, drawing on all "
+        f"segments. Cite timestamps when useful. Do NOT enumerate segments — "
+        f"write a unified, natural response.\n\n"
+        f"{chunk_summaries}"
+    )
+    synthesis = call_omni_text(synthesis_prompt, max_tokens=SYNTHESIS_MAX_TOKENS)
+    total_tokens += synthesis["tokens"]
+
+    print("\n--- Omni Synthesis ---")
+    print(synthesis["content"])
+    print(f"\n[{total_tokens} total tokens across {len(chunks)} chunk calls + 1 synthesis]")
+    return {
+        "chunks": chunk_results,
+        "synthesis": synthesis["content"],
+        "total_tokens": total_tokens,
+    }
+
+
+# ─── batched-PDF / large-image-dir path ────────────────────────────────────
+
+
+def _load_image_dir(path: str) -> list:
+    """Return sorted list of image file paths in a directory."""
+    return sorted(
+        os.path.join(path, f)
+        for f in os.listdir(path)
+        if os.path.splitext(f)[1].lstrip(".").lower() in IMAGE_EXTS
+    )
+
+
+def analyze_image_dir_batched(pages_dir: str, prompt: str = None):
+    """For directories of > MAX_IMAGES_PER_CALL images (typically PDFs).
+
+    Splits pages into batches, sends each batch to Omni separately, then
+    synthesizes the per-batch analyses into one user-facing answer.
+    """
+    pages = _load_image_dir(pages_dir)
+    if not pages:
+        sys.exit(f"No images found in {pages_dir}")
+
+    if prompt is None:
+        prompt = (
+            "Read the document carefully and describe its content: what it "
+            "says, what figures or tables appear, and the overall structure."
+        )
+
+    n_pages = len(pages)
+    n_batches = (n_pages + MAX_IMAGES_PER_CALL - 1) // MAX_IMAGES_PER_CALL
+
+    print(f"Document input: {pages_dir}")
+    print(f"{n_pages} pages → {n_batches} batches of up to {MAX_IMAGES_PER_CALL}")
+    print(f"User prompt: {prompt!r}\n")
+
+    batch_results = []
+    total_tokens = 0
+    for i in range(n_batches):
+        first = i * MAX_IMAGES_PER_CALL
+        last = min((i + 1) * MAX_IMAGES_PER_CALL, n_pages)
+        batch_pages = pages[first:last]
+        first_n, last_n = first + 1, last
+
+        batch_prompt = (
+            f"This is pages {first_n}–{last_n} of a {n_pages}-page document. "
+            f"The user's overall question is: {prompt}\n\n"
+            f"Describe what is on THESE pages specifically. Cite the page "
+            f"number when referencing content (e.g. 'on page {first_n}…'). "
+            f"Stay focused on observable text, figures, and structure — leave "
+            f"final conclusions for the synthesis step."
+        )
+
+        content = [{"type": "text", "text": batch_prompt}]
+        for p in batch_pages:
+            with open(p, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            ext = os.path.splitext(p)[1].lstrip(".").lower() or "png"
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/{ext};base64,{b64}"},
+            })
+
+        payload = {
+            "model": MODEL,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": CHUNK_MAX_TOKENS,
+        }
+        print(f"[{i + 1}/{n_batches}] pages {first_n}-{last_n}...")
+        try:
+            r = _post(payload)
+            batch_results.append({
+                "first_page": first_n,
+                "last_page": last_n,
+                "analysis": r["content"],
+                "tokens": r["tokens"],
+            })
+            total_tokens += r["tokens"]
+            print(f"    ok — {r['tokens']} tokens")
+        except Exception as e:
+            print(f"    ! batch {i + 1} failed: {e}", file=sys.stderr)
+            batch_results.append({
+                "first_page": first_n,
+                "last_page": last_n,
+                "analysis": f"[batch failed: {e}]",
+                "tokens": 0,
+            })
+
+    print(f"\nSynthesizing across {n_batches} batches...")
+    summaries = "\n\n".join(
+        f"=== Pages {b['first_page']}–{b['last_page']} ===\n{b['analysis']}"
+        for b in batch_results
+    )
+    synthesis_prompt = (
+        f"Below are per-batch analyses of a {n_pages}-page document, in page "
+        f"order. The user asked: {prompt}\n\n"
+        f"Write ONE coherent answer to the user's question. Cite page numbers "
+        f"when useful. Do NOT enumerate batches — write a unified response.\n\n"
+        f"{summaries}"
+    )
+    synthesis = call_omni_text(synthesis_prompt, max_tokens=SYNTHESIS_MAX_TOKENS)
+    total_tokens += synthesis["tokens"]
+
+    print("\n--- Omni Synthesis ---")
+    print(synthesis["content"])
+    print(f"\n[{total_tokens} total tokens across {n_batches} batch calls + 1 synthesis]")
+    return {
+        "batches": batch_results,
+        "synthesis": synthesis["content"],
+        "total_tokens": total_tokens,
+    }
+
+
+# ─── transcript mode (single input only) ───────────────────────────────────
+
+
+def transcript_single(video_path: str):
     if not os.path.exists(video_path):
         sys.exit(f"File not found: {video_path}")
+    if _is_chunk_dir(video_path):
+        sys.exit("Transcript mode does not support chunked dirs yet. Use analyze mode.")
 
     duration = get_duration(video_path)
     size_mb = os.path.getsize(video_path) / 1e6
@@ -207,7 +532,7 @@ def transcript_video(video_path: str):
         "- Output ONLY valid JSON, nothing else"
     )
 
-    print("Sending to Nemotron Omni 30B for transcription...")
+    print("Sending to Nemotron 3 Nano Omni for transcription...")
     result = call_omni(video_path, transcript_prompt, max_tokens=8192)
     captions = _parse_transcript_json(result["content"])
 
@@ -248,20 +573,30 @@ def _parse_transcript_json(text: str):
     return None
 
 
+# ─── entrypoint ────────────────────────────────────────────────────────────
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Analyze video with Nemotron Omni 30B (full video, one API call)",
+        description="Analyze video with Nemotron 3 Nano Omni (single video, image, audio, "
+                    "PDF-pages dir, or chunked-video dir)",
     )
-    parser.add_argument("video", help="Path to video file")
+    parser.add_argument("video", help="Path to video / image / audio / pages dir / chunks dir")
     parser.add_argument("--mode", "-m", choices=["analyze", "transcript"],
                         default="analyze",
-                        help="Mode: analyze (default) or transcript (JSON captions)")
+                        help="Mode: analyze (default) or transcript (single input only)")
     parser.add_argument("prompt", nargs="?", default=None,
-                        help="Custom prompt (optional, analyze mode only)")
+                        help="Custom prompt (analyze mode only)")
 
     args = parser.parse_args()
 
     if args.mode == "transcript":
-        transcript_video(args.video)
+        transcript_single(args.video)
+    elif _is_chunk_dir(args.video):
+        analyze_chunked(args.video, args.prompt)
+    elif os.path.isdir(args.video) and len(_load_image_dir(args.video)) > MAX_IMAGES_PER_CALL:
+        # Multi-image directory (typically a long PDF) — too many pages for
+        # one Omni call, so batch + synthesize.
+        analyze_image_dir_batched(args.video, args.prompt)
     else:
-        analyze_video(args.video, args.prompt)
+        analyze_single(args.video, args.prompt)

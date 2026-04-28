@@ -196,12 +196,34 @@ def _build_content_blocks(path: str, prompt: str) -> list:
 
 def _post(payload: dict) -> dict:
     raw = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        API_URL, data=raw, headers={"Content-Type": "application/json"},
-    )
     size_kb = len(raw) // 1024
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = json.loads(resp.read())
+    # Retry on transient 5xx and SSL/connection errors. The NVIDIA-hosted
+    # endpoint occasionally returns 502/503 mid-demo; one-shot retry with a
+    # short backoff hides the blip.
+    last_err = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                API_URL, data=raw, headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code >= 500 and attempt < 2:
+                print(f"  (transient HTTP {e.code} from gateway, retrying in 2s…)", file=sys.stderr)
+                import time as _time; _time.sleep(2)
+                continue
+            raise
+        except urllib.error.URLError as e:
+            last_err = e
+            if attempt < 2:
+                print(f"  (connection error: {e.reason}, retrying in 2s…)", file=sys.stderr)
+                import time as _time; _time.sleep(2)
+                continue
+            raise
+
     msg = data["choices"][0]["message"]
     content = (msg.get("content") or "").strip()
     reasoning = (msg.get("reasoning_content") or msg.get("reasoning") or "").strip()

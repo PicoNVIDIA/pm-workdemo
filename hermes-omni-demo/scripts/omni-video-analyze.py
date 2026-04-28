@@ -226,11 +226,14 @@ def call_omni(path: str, prompt: str, max_tokens: int = 2048) -> dict:
     }
     raw_size_mb = len(json.dumps(payload).encode()) / 1e6
     if raw_size_mb > 9:
-        print(
-            f"Warning: payload is {raw_size_mb:.1f} MB. The openshell gateway caps "
-            "inference bodies around ~9 MB; the call may fail. Use chunk-upload.sh "
-            "to split the video first.",
-            file=sys.stderr,
+        # The gateway will silently drop this with an SSL EOF after 30+
+        # seconds. Fail fast with a useful message instead.
+        sys.exit(
+            f"\nERROR: this video is too large to send to Omni in one call.\n"
+            f"Payload would be {raw_size_mb:.1f} MB; the gateway caps requests at ~9 MB.\n"
+            f"Run on the host first to split it into chunks:\n"
+            f"    bash scripts/chunk-upload.sh {path}\n"
+            f"Then re-ask the question against the chunk directory the helper prints."
         )
     return _post(payload)
 

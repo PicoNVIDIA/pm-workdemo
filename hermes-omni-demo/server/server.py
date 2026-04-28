@@ -171,7 +171,33 @@ async def upload(file: UploadFile = File(...)):
             )
         final_path = out_path
 
+    is_audio_final = final_path.name.endswith(".mp3") or final_path.name.endswith(".wav")
     size = final_path.stat().st_size
+
+    # Big videos exceed the gateway's ~9 MB inline body cap. Chunk them on
+    # the host so the skill can run its multi-call + synthesis path.
+    VIDEO_INLINE_LIMIT_BYTES = 8 * 1024 * 1024
+    if not is_audio_final and size > VIDEO_INLINE_LIMIT_BYTES:
+        chunks_dir = await _chunk_long_video(final_path, uid)
+        sandbox_path = f"/tmp/{chunks_dir.name}"
+        proc = await asyncio.create_subprocess_exec(
+            "openshell", "sandbox", "upload", SANDBOX, str(chunks_dir), sandbox_path,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"sandbox upload failed: {err.decode(errors='ignore')[:500]}",
+            )
+        chunk_size = sum(p.stat().st_size for p in chunks_dir.glob("*.mp4"))
+        return UploadResponse(
+            sandbox_path=sandbox_path,
+            size_bytes=chunk_size,
+            original_name=file.filename or chunks_dir.name,
+            kind="video",
+        )
+
     sandbox_name = final_path.name
     sandbox_path = f"/tmp/{sandbox_name}"
     proc = await asyncio.create_subprocess_exec(
@@ -185,13 +211,67 @@ async def upload(file: UploadFile = File(...)):
             detail=f"sandbox upload failed: {err.decode(errors='ignore')[:500]}",
         )
 
-    is_audio_final = sandbox_name.endswith(".mp3") or sandbox_name.endswith(".wav")
     return UploadResponse(
         sandbox_path=sandbox_path,
         size_bytes=size,
         original_name=file.filename or sandbox_name,
         kind="audio" if is_audio_final else "video",
     )
+
+
+async def _chunk_long_video(src: Path, uid: str) -> Path:
+    """ffmpeg-split a too-big video into ≤ 120s chunks at 480p, write a
+    chunks.json manifest with absolute timestamps, return the directory.
+    Mirrors scripts/chunk-upload.sh — kept here so drag-and-drop in the UI
+    works for arbitrarily long videos."""
+    chunks_dir = UPLOAD_DIR / f"upload-{uid}-chunks"
+    chunks_dir.mkdir(exist_ok=True)
+    for old in chunks_dir.glob("*"):
+        old.unlink()
+
+    cmd = [
+        "ffmpeg", "-y", "-i", str(src),
+        "-vf", "scale=854:480,fps=24",
+        "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+        "-force_key_frames", "expr:gte(t,n_forced*120)",
+        "-c:a", "aac", "-b:a", "64k",
+        "-f", "segment", "-segment_time", "120", "-reset_timestamps", "1",
+        "-segment_format", "mp4",
+        str(chunks_dir / "chunk_%03d.mp4"),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            500,
+            f"chunk transcode failed: {err.decode(errors='ignore')[-500:]}",
+        )
+
+    manifest = {"source": str(src), "chunks": []}
+    offset = 0.0
+    for path in sorted(chunks_dir.glob("chunk_*.mp4")):
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        try:
+            dur = float(out.decode().strip())
+        except ValueError:
+            dur = 0.0
+        manifest["chunks"].append({"name": path.name, "start": offset, "end": offset + dur})
+        offset += dur
+
+    (chunks_dir / "chunks.json").write_text(json.dumps(manifest, indent=2))
+    return chunks_dir
 
 
 # ──────────────────────────── chat ──────────────────────────────

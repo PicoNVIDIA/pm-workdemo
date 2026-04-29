@@ -444,11 +444,6 @@ Host
 │       └── /tmp/
 │           ├── gateway.log        ← gateway stdout/stderr
 │           └── openclaw/          ← daily JSON logs
-└── ~/oclaw/
-    ├── openclaw.json              ← local reference config
-    ├── TOOLS.md                   ← source of truth for workspace TOOLS.md
-    ├── policy.yaml                ← patched OpenShell network policy
-    └── README.md                  ← this file
 ```
 
 ### Key points
